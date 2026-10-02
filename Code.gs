@@ -1,17 +1,28 @@
+/**
+ * Daily Gaming & Emulator Market Report
+ *
+ * Setup: in Apps Script go to Project Settings > Script Properties and add:
+ *   GEMINI_API_KEY   - your Gemini API key
+ *   RECIPIENT_EMAIL  - one or more emails, separated by commas
+ */
 function generateAndEmailGamingReport() {
-  // 1. Configuration
-  const apiKey = "your_API_KEY_here"; 
-  const recipientEmail = "Example@xyz.com"; //Multiple emails can be provided seprated by comma  
-  
+  // 1. Configuration (secrets live in Script Properties, never in code)
+  const props = PropertiesService.getScriptProperties();
+  const apiKey = props.getProperty("GEMINI_API_KEY");
+  const recipientEmail = props.getProperty("RECIPIENT_EMAIL");
+
+  if (!apiKey || !recipientEmail) {
+    throw new Error("Missing Script Properties: set GEMINI_API_KEY and RECIPIENT_EMAIL.");
+  }
+
   const today = new Date();
   const dateString = today.toISOString().split('T')[0];
   const reportTitle = `Daily Gaming & Emulator Market Report - ${dateString}`;
 
-  // 2. Fetch Live Data From All Your Custom Sources
-  Logger.log("🌐 Scraping all custom brand, community, and publisher sources...");
+  // 2. Fetch live data from all sources
+  Logger.log("Scraping all custom brand, community, and publisher sources...");
   let reportContext = "";
 
-  // Helper object mapping sources to their target sections
   const sources = {
     "BlueStacks Community (Reddit)": "https://www.reddit.com/r/BlueStacks/.rss",
     "LDPlayer Blogs": "https://www.ldplayer.net/blog?category=370",
@@ -33,7 +44,6 @@ function generateAndEmailGamingReport() {
     "Gaming Community (r/MMORPG)": "https://www.reddit.com/r/MMORPG/.rss",
     "Gaming Community (r/emulators)": "https://www.reddit.com/r/emulators/.rss",
     "Gaming Community (r/gaming)": "https://www.reddit.com/r/gaming/.rss",
-    // Brand New Gaming News Publishers Added
     "Gaming News (IGN Mobile)": "https://in.ign.com/mobile",
     "Gaming News (GameSpot)": "https://www.gamespot.com/category/news/",
     "Gaming News (PC Gamer)": "https://www.pcgamer.com/",
@@ -44,16 +54,16 @@ function generateAndEmailGamingReport() {
   for (let sourceName in sources) {
     try {
       let url = sources[sourceName];
-      let response = UrlFetchApp.fetch(url, { 
+      let response = UrlFetchApp.fetch(url, {
         muteHttpExceptions: true,
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MarketReportBot/1.0" }
       });
-      
+
       let text = response.getContentText();
       let extractedData = "";
 
       if (url.includes(".rss") || url.includes("feed") || text.includes("<item>") || text.includes("<entry>")) {
-        // --- RSS Parsing Logic (Reddit & Feeds) ---
+        // RSS parsing (Reddit & feeds)
         let items = text.match(/<item>[\s\S]*?<\/item>|<entry>[\s\S]*?<\/entry>/g) || [];
         for (let i = 0; i < Math.min(6, items.length); i++) {
           let titleMatch = items[i].match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/);
@@ -62,7 +72,7 @@ function generateAndEmailGamingReport() {
           }
         }
       } else {
-        // --- HTML Parsing Logic (Company Blogs & Publisher Web Links) ---
+        // HTML parsing (company blogs & publisher pages)
         text = text.replace(/<script[\s\S]*?<\/script>/gi, '')
                    .replace(/<style[\s\S]*?<\/style>/gi, '')
                    .replace(/<[^>]+>/g, ' ')
@@ -76,7 +86,7 @@ function generateAndEmailGamingReport() {
     }
   }
 
-  // 3. Prompt (Timeframe constraints kept at 24 to 48 hours, new Gaming News section included)
+  // 3. Prompt
   const promptText = `
 You are an expert market research AI. Generate the "Daily Gaming & Emulator Market Report".
 Confirm today's actual date: ${dateString}. 
@@ -157,14 +167,14 @@ Date: ${dateString}
 (List the text names of the publications, forums, or platforms utilized for research in the last 24 to 48 hours, but do not provide raw URLs).
   `;
 
-  // 4. Call the Gemini API (With Model Fallback)
+  // 4. Call the Gemini API (with model fallback)
   let json;
   let success = false;
   const models = ["gemini-3.5-flash", "gemini-2.5-flash"];
 
   for (let model of models) {
     if (success) break;
-    
+
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     const payload = {
       "contents": [{ "parts": [{ "text": promptText }] }],
@@ -180,10 +190,10 @@ Date: ${dateString}
     let delayTime = 4000;
     for (let i = 0; i < 3; i++) {
       try {
-        Logger.log(`🤖 Executing analysis via model: ${model} (Attempt ${i + 1}/3)...`);
+        Logger.log(`Executing analysis via model: ${model} (Attempt ${i + 1}/3)...`);
         const response = UrlFetchApp.fetch(apiUrl, options);
         json = JSON.parse(response.getContentText());
-        
+
         if (json.error) {
           if (json.error.message.includes("high demand") || json.error.code == 429 || json.error.code == 503) {
             Utilities.sleep(delayTime);
@@ -192,9 +202,9 @@ Date: ${dateString}
           }
           throw new Error(json.error.message);
         }
-        
+
         success = true;
-        break; 
+        break;
       } catch (e) {
         Logger.log(`Fetch error with ${model}: ` + e.toString());
         Utilities.sleep(delayTime);
@@ -203,7 +213,7 @@ Date: ${dateString}
     }
   }
 
-  // 5. Create Google Document and Send Email
+  // 5. Create Google Doc and send email
   try {
     if (!success) {
       throw new Error("Failed to generate report after trying all fallback models due to high API demand.");
@@ -213,18 +223,19 @@ Date: ${dateString}
 
     const doc = DocumentApp.create(reportTitle);
     const body = doc.getBody();
-    
+
     body.insertParagraph(0, reportContent);
     doc.saveAndClose();
-    
-    const fileId = doc.getId();
-    const file = DriveApp.getFileById(fileId);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
-    
+
+    // Share only with the recipients (no public link)
+    const recipients = recipientEmail.split(",").map(function (e) { return e.trim(); }).filter(Boolean);
+    const file = DriveApp.getFileById(doc.getId());
+    file.addEditors(recipients);
+
     const docUrl = doc.getUrl();
 
-    const emailSubject = `✅ Ready: ${reportTitle}`;
-    const emailBody = `Your automated Daily Gaming & Emulator Market Report for ${dateString} has been successfully generated.\n\nYou can access and edit the report here:\n${docUrl}\n\n(Note: Anyone with this link has Editor access to this document.)`;
+    const emailSubject = `Ready: ${reportTitle}`;
+    const emailBody = `Your automated Daily Gaming & Emulator Market Report for ${dateString} has been successfully generated.\n\nYou can access and edit the report here:\n${docUrl}\n\n(Note: only the recipients of this email have access to this document.)`;
 
     GmailApp.sendEmail(recipientEmail, emailSubject, emailBody);
     Logger.log("Report generated and emailed successfully: " + docUrl);
@@ -232,8 +243,8 @@ Date: ${dateString}
   } catch (error) {
     Logger.log("Error generating report: " + error.toString());
     GmailApp.sendEmail(
-      recipientEmail, 
-      `❌ Error: ${reportTitle}`, 
+      recipientEmail,
+      `Error: ${reportTitle}`,
       `There was an error generating your automated report today.\n\nError details: ${error.toString()}`
     );
   }
