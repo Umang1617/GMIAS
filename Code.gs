@@ -1,158 +1,83 @@
-/**
- * GMIAS - Gaming Market Intelligence Automation System
- *
- * Pulls fresh posts and articles from RSS feeds and web pages, sends them to
- * the Gemini API for analysis, saves the report as a Google Doc, and emails
- * the link to your recipients.
- *
- * SETUP: add these in Project Settings > Script properties (never in code):
- *   GEMINI_API_KEY      your Gemini API key (required)
- *   REPORT_RECIPIENTS   comma-separated emails to receive the report (required)
- *   GEMINI_MODELS       optional, comma-separated model names to try in order
- */
-
-// ---------- Settings ----------
-const DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash", "gemini-2.5-flash"];
-const MAX_ITEMS_PER_FEED = 6;     // newest items read from each RSS feed
-const MAX_HTML_CHARS = 2500;      // characters kept from each web page
-const MAX_RETRIES = 3;            // attempts per model
-const TRIGGER_HOUR = 8;           // hour of day for the daily trigger (script time zone)
-
-// Source name -> URL. RSS/Atom feeds and plain web pages are both supported.
-const SOURCES = {
-  "BlueStacks Community (Reddit)": "https://www.reddit.com/r/BlueStacks/.rss",
-  "LDPlayer Blogs": "https://www.ldplayer.net/blog?category=370",
-  "LDPlayer Community (Reddit)": "https://www.reddit.com/r/LDPlayerEmulator/.rss",
-  "MuMu Player News": "https://www.mumuplayer.com/blog/news/",
-  "MuMu Player Community (Reddit)": "https://www.reddit.com/r/MuMuPlayerOfficial/.rss",
-  "Google Play Games Community (Reddit)": "https://www.reddit.com/r/googleplay/.rss",
-  "Steam Community (Reddit)": "https://www.reddit.com/r/Steam/.rss",
-  "Epic Games News": "https://store.epicgames.com/news",
-  "AI News (TechCrunch)": "https://techcrunch.com/category/artificial-intelligence/feed/",
-  "AI News (AI News Network)": "https://www.artificialintelligence-news.com/feed/",
-  "AI News (Reddit r/artificial)": "https://www.reddit.com/r/artificial/.rss",
-  "Social Trends (Discord Blog)": "https://discord.com/blog",
-  "Social Trends (Meta Newsroom)": "https://about.fb.com/news/",
-  "Social Media Marketing (Reddit)": "https://www.reddit.com/r/SocialMediaMarketing/.rss",
-  "Gaming Community (r/gachagaming)": "https://www.reddit.com/r/gachagaming/.rss",
-  "Gaming Community (r/AndroidGaming)": "https://www.reddit.com/r/AndroidGaming/.rss",
-  "Gaming Community (r/MobileGaming)": "https://www.reddit.com/r/MobileGaming/.rss",
-  "Gaming Community (r/MMORPG)": "https://www.reddit.com/r/MMORPG/.rss",
-  "Gaming Community (r/emulators)": "https://www.reddit.com/r/emulators/.rss",
-  "Gaming Community (r/gaming)": "https://www.reddit.com/r/gaming/.rss",
-  "Gaming News (IGN Mobile)": "https://in.ign.com/mobile",
-  "Gaming News (GameSpot)": "https://www.gamespot.com/category/news/",
-  "Gaming News (PC Gamer)": "https://www.pcgamer.com/",
-  "Gaming News (Android Authority)": "https://www.androidauthority.com/mobile-games/",
-  "Gaming News (Pocket Gamer)": "https://www.pocketgamer.com/news/"
-};
-
-// ---------- Main entry point ----------
 function generateAndEmailGamingReport() {
-  const config = getConfig_();
-  const dateString = new Date().toISOString().split("T")[0];
-  const reportTitle = "Daily Gaming & Emulator Market Report - " + dateString;
+  // 1. Configuration
+  const apiKey = "your_API_KEY_here"; 
+  const recipientEmail = "Example@xyz.com"; //Multiple emails can be provided seprated by comma  
+  
+  const today = new Date();
+  const dateString = today.toISOString().split('T')[0];
+  const reportTitle = `Daily Gaming & Emulator Market Report - ${dateString}`;
 
-  try {
-    Logger.log("Scraping all brand, community, and publisher sources...");
-    const reportContext = fetchAllSources_();
-
-    const reportText = callGemini_(buildPrompt_(dateString, reportContext), config);
-    const docUrl = createReportDoc_(reportTitle, reportText, config.recipients);
-
-    GmailApp.sendEmail(
-      config.recipients,
-      "Ready: " + reportTitle,
-      "Your automated Daily Gaming & Emulator Market Report for " + dateString +
-        " has been generated.\n\nOpen it here:\n" + docUrl +
-        "\n\n(The document is private and shared only with the report recipients.)"
-    );
-    Logger.log("Report generated and emailed: " + docUrl);
-  } catch (error) {
-    Logger.log("Error generating report: " + error.message);
-    GmailApp.sendEmail(
-      config.recipients,
-      "Error: " + reportTitle,
-      "There was an error generating your automated report today.\n\nError details: " + error.message
-    );
-  }
-}
-
-// Run this once to schedule the report daily. Re-running replaces the old trigger.
-function setupDailyTrigger() {
-  ScriptApp.getProjectTriggers()
-    .filter(function (t) { return t.getHandlerFunction() === "generateAndEmailGamingReport"; })
-    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
-
-  ScriptApp.newTrigger("generateAndEmailGamingReport")
-    .timeBased()
-    .everyDays(1)
-    .atHour(TRIGGER_HOUR)
-    .create();
-  Logger.log("Daily trigger set for around " + TRIGGER_HOUR + ":00.");
-}
-
-// ---------- Configuration ----------
-function getConfig_() {
-  const props = PropertiesService.getScriptProperties();
-  const apiKey = props.getProperty("GEMINI_API_KEY");
-  const recipients = props.getProperty("REPORT_RECIPIENTS");
-  if (!apiKey || !recipients) {
-    throw new Error("Set GEMINI_API_KEY and REPORT_RECIPIENTS in Project Settings > Script properties.");
-  }
-  const modelList = props.getProperty("GEMINI_MODELS");
-  const models = modelList
-    ? modelList.split(",").map(function (m) { return m.trim(); }).filter(Boolean)
-    : DEFAULT_GEMINI_MODELS;
-  return { apiKey: apiKey, recipients: recipients, models: models };
-}
-
-// ---------- Step 1: fetch and parse sources ----------
-function fetchAllSources_() {
+  // 2. Fetch Live Data From All Your Custom Sources
+  Logger.log("🌐 Scraping all custom brand, community, and publisher sources...");
   let reportContext = "";
 
-  for (const sourceName in SOURCES) {
+  // Helper object mapping sources to their target sections
+  const sources = {
+    "BlueStacks Community (Reddit)": "https://www.reddit.com/r/BlueStacks/.rss",
+    "LDPlayer Blogs": "https://www.ldplayer.net/blog?category=370",
+    "LDPlayer Community (Reddit)": "https://www.reddit.com/r/LDPlayerEmulator/.rss",
+    "MuMu Player News": "https://www.mumuplayer.com/blog/news/",
+    "MuMu Player Community (Reddit)": "https://www.reddit.com/r/MuMuPlayerOfficial/.rss",
+    "Google Play Games Community (Reddit)": "https://www.reddit.com/r/googleplay/.rss",
+    "Steam Community (Reddit)": "https://www.reddit.com/r/Steam/.rss",
+    "Epic Games News": "https://store.epicgames.com/news",
+    "AI News (TechCrunch)": "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "AI News (AI News Network)": "https://www.artificialintelligence-news.com/feed/",
+    "AI News (Reddit r/artificial)": "https://www.reddit.com/r/artificial/.rss",
+    "Social Trends (Discord Blog)": "https://discord.com/blog",
+    "Social Trends (Meta Newsroom)": "https://about.fb.com/news/",
+    "Social Media Marketing (Reddit)": "https://www.reddit.com/r/SocialMediaMarketing/.rss",
+    "Gaming Community (r/gachagaming)": "https://www.reddit.com/r/gachagaming/.rss",
+    "Gaming Community (r/AndroidGaming)": "https://www.reddit.com/r/AndroidGaming/.rss",
+    "Gaming Community (r/MobileGaming)": "https://www.reddit.com/r/MobileGaming/.rss",
+    "Gaming Community (r/MMORPG)": "https://www.reddit.com/r/MMORPG/.rss",
+    "Gaming Community (r/emulators)": "https://www.reddit.com/r/emulators/.rss",
+    "Gaming Community (r/gaming)": "https://www.reddit.com/r/gaming/.rss",
+    // Brand New Gaming News Publishers Added
+    "Gaming News (IGN Mobile)": "https://in.ign.com/mobile",
+    "Gaming News (GameSpot)": "https://www.gamespot.com/category/news/",
+    "Gaming News (PC Gamer)": "https://www.pcgamer.com/",
+    "Gaming News (Android Authority)": "https://www.androidauthority.com/mobile-games/",
+    "Gaming News (Pocket Gamer)": "https://www.pocketgamer.com/news/"
+  };
+
+  for (let sourceName in sources) {
     try {
-      const url = SOURCES[sourceName];
-      const response = UrlFetchApp.fetch(url, {
+      let url = sources[sourceName];
+      let response = UrlFetchApp.fetch(url, { 
         muteHttpExceptions: true,
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MarketReportBot/1.0" }
       });
-
+      
       let text = response.getContentText();
       let extractedData = "";
 
       if (url.includes(".rss") || url.includes("feed") || text.includes("<item>") || text.includes("<entry>")) {
-        // RSS / Atom: keep the newest item titles
-        const items = text.match(/<item>[\s\S]*?<\/item>|<entry>[\s\S]*?<\/entry>/g) || [];
-        for (let i = 0; i < Math.min(MAX_ITEMS_PER_FEED, items.length); i++) {
-          const titleMatch = items[i].match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/);
+        // --- RSS Parsing Logic (Reddit & Feeds) ---
+        let items = text.match(/<item>[\s\S]*?<\/item>|<entry>[\s\S]*?<\/entry>/g) || [];
+        for (let i = 0; i < Math.min(6, items.length); i++) {
+          let titleMatch = items[i].match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/);
           if (titleMatch) {
-            extractedData += "- " + (titleMatch[1] || titleMatch[2]) + "\n";
+            extractedData += `- ${titleMatch[1] || titleMatch[2]}\n`;
           }
         }
       } else {
-        // Web page: strip scripts, styles and tags, keep the first chunk of text
-        text = text
-          .replace(/<script[\s\S]*?<\/script>/gi, "")
-          .replace(/<style[\s\S]*?<\/style>/gi, "")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ");
-        extractedData = text.substring(0, MAX_HTML_CHARS) + "...";
+        // --- HTML Parsing Logic (Company Blogs & Publisher Web Links) ---
+        text = text.replace(/<script[\s\S]*?<\/script>/gi, '')
+                   .replace(/<style[\s\S]*?<\/style>/gi, '')
+                   .replace(/<[^>]+>/g, ' ')
+                   .replace(/\s+/g, ' ');
+        extractedData = text.substring(0, 2500) + "...";
       }
 
-      reportContext += "\n--- SOURCE DATA: " + sourceName + " ---\n" +
-        (extractedData || "No readable fresh data extracted.") + "\n";
+      reportContext += `\n--- SOURCE DATA: ${sourceName} ---\n${extractedData || "No readable fresh data extracted."}\n`;
     } catch (e) {
-      Logger.log("Failed to extract from " + sourceName + ": " + e.toString());
+      Logger.log(`Failed to extract from ${sourceName}: ${e.toString()}`);
     }
   }
-  return reportContext;
-}
 
-// ---------- Step 2: build the prompt ----------
-function buildPrompt_(dateString, reportContext) {
-  return `
+  // 3. Prompt (Timeframe constraints kept at 24 to 48 hours, new Gaming News section included)
+  const promptText = `
 You are an expert market research AI. Generate the "Daily Gaming & Emulator Market Report".
 Confirm today's actual date: ${dateString}. 
 
@@ -231,69 +156,85 @@ Date: ${dateString}
 12. Sources
 (List the text names of the publications, forums, or platforms utilized for research in the last 24 to 48 hours, but do not provide raw URLs).
   `;
-}
 
-// ---------- Step 3: call Gemini (model fallback + retry) ----------
-function callGemini_(promptText, config) {
-  const payload = {
-    contents: [{ parts: [{ text: promptText }] }],
-    generationConfig: { temperature: 0.2 }
-  };
+  // 4. Call the Gemini API (With Model Fallback)
+  let json;
+  let success = false;
+  const models = ["gemini-3.5-flash", "gemini-2.5-flash"];
 
-  for (let m = 0; m < config.models.length; m++) {
-    const model = config.models[m];
-    // The key travels in a header, not the URL, so it can't leak into logs or error messages.
-    const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent";
+  for (let model of models) {
+    if (success) break;
+    
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const payload = {
+      "contents": [{ "parts": [{ "text": promptText }] }],
+      "generationConfig": { "temperature": 0.2 }
+    };
     const options = {
-      method: "post",
-      contentType: "application/json",
-      headers: { "x-goog-api-key": config.apiKey },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
+      "method": "post",
+      "contentType": "application/json",
+      "payload": JSON.stringify(payload),
+      "muteHttpExceptions": true
     };
 
     let delayTime = 4000;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    for (let i = 0; i < 3; i++) {
       try {
-        Logger.log("Running analysis with " + model + " (attempt " + attempt + "/" + MAX_RETRIES + ")...");
-        const json = JSON.parse(UrlFetchApp.fetch(apiUrl, options).getContentText());
-
+        Logger.log(`🤖 Executing analysis via model: ${model} (Attempt ${i + 1}/3)...`);
+        const response = UrlFetchApp.fetch(apiUrl, options);
+        json = JSON.parse(response.getContentText());
+        
         if (json.error) {
-          const message = String(json.error.message || "");
-          if (message.includes("high demand") || json.error.code == 429 || json.error.code == 503) {
+          if (json.error.message.includes("high demand") || json.error.code == 429 || json.error.code == 503) {
             Utilities.sleep(delayTime);
             delayTime *= 2;
             continue;
           }
-          throw new Error(message || "Unknown API error");
+          throw new Error(json.error.message);
         }
-
-        const text = json.candidates && json.candidates[0] &&
-          json.candidates[0].content && json.candidates[0].content.parts &&
-          json.candidates[0].content.parts[0] && json.candidates[0].content.parts[0].text;
-        if (!text) {
-          throw new Error("The API returned no report text.");
-        }
-        return text;
+        
+        success = true;
+        break; 
       } catch (e) {
-        Logger.log("Fetch error with " + model + ": " + e.message);
+        Logger.log(`Fetch error with ${model}: ` + e.toString());
         Utilities.sleep(delayTime);
         delayTime *= 2;
       }
     }
   }
-  throw new Error("Failed to generate the report after trying all models (high API demand or an API error).");
-}
 
-// ---------- Step 4: save the report as a private Google Doc ----------
-function createReportDoc_(title, content, recipients) {
-  const doc = DocumentApp.create(title);
-  doc.getBody().setText(content);
-  doc.saveAndClose();
+  // 5. Create Google Document and Send Email
+  try {
+    if (!success) {
+      throw new Error("Failed to generate report after trying all fallback models due to high API demand.");
+    }
 
-  // Docs are private by default. Share only with the people who should read it.
-  const emails = recipients.split(",").map(function (e) { return e.trim(); }).filter(Boolean);
-  DriveApp.getFileById(doc.getId()).addViewers(emails);
+    let reportContent = json.candidates[0].content.parts[0].text;
 
-  return doc.getUrl();
+    const doc = DocumentApp.create(reportTitle);
+    const body = doc.getBody();
+    
+    body.insertParagraph(0, reportContent);
+    doc.saveAndClose();
+    
+    const fileId = doc.getId();
+    const file = DriveApp.getFileById(fileId);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
+    
+    const docUrl = doc.getUrl();
+
+    const emailSubject = `✅ Ready: ${reportTitle}`;
+    const emailBody = `Your automated Daily Gaming & Emulator Market Report for ${dateString} has been successfully generated.\n\nYou can access and edit the report here:\n${docUrl}\n\n(Note: Anyone with this link has Editor access to this document.)`;
+
+    GmailApp.sendEmail(recipientEmail, emailSubject, emailBody);
+    Logger.log("Report generated and emailed successfully: " + docUrl);
+
+  } catch (error) {
+    Logger.log("Error generating report: " + error.toString());
+    GmailApp.sendEmail(
+      recipientEmail, 
+      `❌ Error: ${reportTitle}`, 
+      `There was an error generating your automated report today.\n\nError details: ${error.toString()}`
+    );
+  }
 }
