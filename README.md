@@ -1,13 +1,13 @@
 # 📊 GMIAS: Gaming Market Intelligence Automation System
 
-**A lightweight Google Apps Script that scans 25 gaming, emulator, AI and social sources every day, asks Gemini to analyze them, and emails you a ready-to-read market report as a Google Doc.**
+**A lightweight Google Apps Script that scans 25 gaming, emulator, AI and social sources, asks Gemini to analyze them, and emails you a ready-to-read market report as a Google Doc.**
 
 ![Google Apps Script](https://img.shields.io/badge/Google_Apps_Script-4285F4?style=flat-square&logo=google&logoColor=white)
 ![Gemini API](https://img.shields.io/badge/Gemini_API-8E75B2?style=flat-square&logo=googlegemini&logoColor=white)
 ![Google Docs](https://img.shields.io/badge/Google_Docs-4285F4?style=flat-square&logo=googledocs&logoColor=white)
 ![Gmail](https://img.shields.io/badge/Gmail-EA4335?style=flat-square&logo=gmail&logoColor=white)
 
-No servers, no database, no dependencies. Everything runs inside your Google account.
+One file, no servers, no database, no dependencies. Everything runs inside your Google account.
 
 <!-- TODO: add a screenshot of a sample report here -->
 
@@ -25,13 +25,13 @@ Parse: RSS titles or cleaned page text
 Gemini API (strict 24-48 hour, no-hallucination prompt)
         │
         ▼
-Google Doc (private, shared only with recipients)
+Google Doc
         │
         ▼
 Gmail: link sent to your recipients
 ```
 
-If the AI call fails, you get an error email instead of silence. If the first model is busy, the script retries with backoff and falls back to the next model.
+If the first Gemini model is busy, the script retries with backoff (3 attempts, doubling the wait) and then falls back to the next model. If everything fails, you get an error email instead of silence.
 
 ## What's in the report
 
@@ -60,45 +60,38 @@ The prompt tells the model to use only the live data it was given, to say "No ne
 | Gaming communities | r/gachagaming, r/AndroidGaming, r/MobileGaming, r/MMORPG, r/emulators, r/gaming |
 | Social trends | Discord Blog, Meta Newsroom, r/SocialMediaMarketing |
 
-Add or remove sources by editing the `SOURCES` object at the top of `Code.gs`. RSS/Atom feeds and plain web pages both work.
+Add or remove sources by editing the `sources` object in `Code.gs`. RSS/Atom feeds and plain web pages both work.
 
 ## Setup (about 10 minutes)
 
 1. Go to [script.google.com](https://script.google.com) and create a **New project**.
-2. Replace the contents of `Code.gs` with the file from this repo. In **Project Settings**, tick *Show "appsscript.json" manifest file* and paste in `appsscript.json` too (optional, but it sets the time zone and permissions).
-3. Open **Project Settings → Script properties** and add:
-
-   | Property | Value |
-   |---|---|
-   | `GEMINI_API_KEY` | Your key from [Google AI Studio](https://aistudio.google.com/app/apikey) |
-   | `REPORT_RECIPIENTS` | One or more emails, separated by commas |
-   | `GEMINI_MODELS` | *(optional)* Models to try in order, e.g. `gemini-2.5-flash` |
-
+2. Replace the contents of the editor with `Code.gs` from this repo.
+3. At the top of the script, set your own values:
+   - `apiKey`: your key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+   - `recipientEmail`: your email (separate several with commas)
 4. Select `generateAndEmailGamingReport` and click **Run**. Approve the permission prompts the first time.
-5. Check your inbox. Then run `setupDailyTrigger` once to schedule the report daily (set `TRIGGER_HOUR` in `Code.gs` to change the time).
-
-Prefer the command line? [clasp](https://github.com/google/clasp) works too: `clasp create --type standalone`, then `clasp push`.
+5. Check your inbox for the report link.
+6. To run it daily, open **Triggers** (the clock icon) → **Add Trigger** → choose `generateAndEmailGamingReport` → **Time-driven** → **Day timer** → pick a time.
 
 ## Configuration
 
-| Setting | Where | Default |
+| Setting | Where in `Code.gs` | Default |
 |---|---|---|
-| API key | Script property `GEMINI_API_KEY` | none (required) |
-| Recipients | Script property `REPORT_RECIPIENTS` | none (required) |
-| Models | Script property `GEMINI_MODELS` | `gemini-3.5-flash`, `gemini-2.5-flash` |
-| Items read per feed | `MAX_ITEMS_PER_FEED` in `Code.gs` | 6 |
-| Text kept per web page | `MAX_HTML_CHARS` in `Code.gs` | 2500 |
-| Retries per model | `MAX_RETRIES` in `Code.gs` | 3 |
-| Daily run hour | `TRIGGER_HOUR` in `Code.gs` | 8 |
+| API key | `apiKey` | placeholder |
+| Recipients | `recipientEmail` | placeholder |
+| Sources | `sources` object | 25 sources |
+| Items read per feed | `Math.min(6, ...)` | 6 |
+| Text kept per web page | `substring(0, 2500)` | 2500 characters |
+| Models | `models` array | `gemini-3.5-flash`, `gemini-2.5-flash` |
+| Retries per model | `for (let i = 0; i < 3; ...)` | 3 |
 
-Check the model names against what's currently available in Google AI Studio and update `GEMINI_MODELS` if needed.
+Check the model names against what's currently available in Google AI Studio and update the `models` array if needed.
 
-## Security
+## Security notes
 
-- The API key and recipient emails live in **Script properties**, never in the code, so the code is safe to publish.
-- The key is sent in a request header rather than the URL, so it can't leak through logs or error messages.
-- Report docs are **private** and shared only with `REPORT_RECIPIENTS`.
-- If a key was ever pasted into code you shared or committed, revoke it in Google AI Studio and create a new one.
+- **Never commit your real API key or email.** This repo contains placeholders only. Keep it that way when you push changes. If a real key is ever committed or shared, revoke it in Google AI Studio and create a new one.
+- **The report document is editable by anyone with the link.** The script sets this on purpose, and the email says so. That is fine for a low-sensitivity report, but if you want it private, delete the `file.setSharing(...)` line.
+- **The API key is sent in the request URL.** If an API call fails, the URL (and key) can appear in your execution logs. Don't share those logs.
 
 ## Limitations
 
@@ -110,10 +103,10 @@ Check the model names against what's currently available in Google AI Studio and
 
 ## Roadmap
 
-- [ ] Filter feed items by publish date in code
+- [ ] Move the API key and recipients into Script Properties
+- [ ] Filter feed items by publish date
 - [ ] Source health summary at the end of each run
 - [ ] Optional Slack or Telegram delivery
-- [ ] Week-over-week trend comparison
 
 ## Author
 
