@@ -25,7 +25,7 @@ Parse: RSS titles or cleaned page text
 Gemini API (strict 24-48 hour, no-hallucination prompt)
         │
         ▼
-Google Doc
+Google Doc (shared only with your recipients)
         │
         ▼
 Gmail: link sent to your recipients
@@ -66,20 +66,25 @@ Add or remove sources by editing the `sources` object in `Code.gs`. RSS/Atom fee
 
 1. Go to [script.google.com](https://script.google.com) and create a **New project**.
 2. Replace the contents of the editor with `Code.gs` from this repo.
-3. At the top of the script, set your own values:
-   - `apiKey`: your key from [Google AI Studio](https://aistudio.google.com/app/apikey)
-   - `recipientEmail`: your email (separate several with commas)
+3. Open **Project Settings** (gear icon) → **Script Properties** → **Add script property**, and add:
+
+   | Property | Value |
+   |---|---|
+   | `GEMINI_API_KEY` | Your key from [Google AI Studio](https://aistudio.google.com/app/apikey) |
+   | `RECIPIENT_EMAIL` | Your email (separate several with commas) |
+
+   Property names must match exactly, including capitalization. Click **Save script properties**.
 4. Select `generateAndEmailGamingReport` and click **Run**. Approve the permission prompts the first time.
 5. Check your inbox for the report link.
 6. To run it daily, open **Triggers** (the clock icon) → **Add Trigger** → choose `generateAndEmailGamingReport` → **Time-driven** → **Day timer** → pick a time.
 
 ## Configuration
 
-| Setting | Where in `Code.gs` | Default |
+| Setting | Where | Default |
 |---|---|---|
-| API key | `apiKey` | placeholder |
-| Recipients | `recipientEmail` | placeholder |
-| Sources | `sources` object | 25 sources |
+| API key | Script Property `GEMINI_API_KEY` | none (required) |
+| Recipients | Script Property `RECIPIENT_EMAIL` | none (required) |
+| Sources | `sources` object in `Code.gs` | 25 sources |
 | Items read per feed | `Math.min(6, ...)` | 6 |
 | Text kept per web page | `substring(0, 2500)` | 2500 characters |
 | Models | `models` array | `gemini-3.5-flash`, `gemini-2.5-flash` |
@@ -89,13 +94,14 @@ Check the model names against what's currently available in Google AI Studio and
 
 ## Security notes
 
-- **Never commit your real API key or email.** This repo contains placeholders only. Keep it that way when you push changes. If a real key is ever committed or shared, revoke it in Google AI Studio and create a new one.
-- **The report document is editable by anyone with the link.** The script sets this on purpose, and the email says so. That is fine for a low-sensitivity report, but if you want it private, delete the `file.setSharing(...)` line.
+- **Secrets live in Script Properties, not in the code.** This repo contains no keys or email addresses. Keep it that way when you push changes. If a real key is ever committed or shared, revoke it in Google AI Studio and create a new one.
+- **The report document is shared only with your recipients.** The script adds each address in `RECIPIENT_EMAIL` as an editor and does not create a public link.
 - **The API key is sent in the request URL.** If an API call fails, the URL (and key) can appear in your execution logs. Don't share those logs.
 
 ## Limitations
 
 - **Freshness comes from the prompt, not the parser.** The script collects feed titles and page text without publish dates, so the 24-48 hour rule is something the model is asked to follow, not something the code checks. Treat the report as a draft to review.
+- **Recipients need Google accounts** to open the Doc, since access is granted per address.
 - **Web pages are a rough read.** JavaScript-heavy pages may return little text, and only the first 2,500 characters are kept.
 - **Feeds can fail.** Sites sometimes block automated requests or rate-limit them. Failed sources are skipped and logged.
 - **Scraped text is untrusted.** Posts and pages are passed to the model as-is, so skim the output before sharing it widely.
@@ -103,7 +109,7 @@ Check the model names against what's currently available in Google AI Studio and
 
 ## Roadmap
 
-- [ ] Move the API key and recipients into Script Properties
+- [x] Move the API key and recipients into Script Properties
 - [ ] Filter feed items by publish date
 - [ ] Source health summary at the end of each run
 - [ ] Optional Slack or Telegram delivery
